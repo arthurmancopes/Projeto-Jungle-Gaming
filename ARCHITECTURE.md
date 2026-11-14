@@ -287,9 +287,9 @@ Eventos (uma subclasse de `IntegrationEvent` por tipo, com `eventType` e `versio
 
 ## 13. Reconciliação e paginação
 
-- `POST /wallets/:id/reconciliation` soma o ledger (`CREDIT` positivo, `DEBIT` negativo) no banco e compara com `wallets.balance`, em uma transação `REPEATABLE READ` somente leitura, para que as duas leituras vejam o mesmo snapshot.
+- `POST /wallets/:id/reconciliation` soma o ledger (`CREDIT` positivo, `DEBIT` negativo) no banco e compara com `wallets.balance`. As duas leituras saem de uma única instrução SQL (`JOIN` + `GROUP BY`), portanto do mesmo snapshot.
 - Divergência **não é corrigida**: gera log de erro, incrementa a métrica e a resposta volta com `consistent: false`.
-- O ledger é paginado por `seq` (`bigserial`): `WHERE wallet_id = ? AND seq > ? ORDER BY seq LIMIT ?`. O cursor é o `seq` em base64url, opaco para o cliente e estável sob inserções concorrentes.
+- O ledger é paginado por `seq` (`bigserial`): `WHERE wallet_id = ? AND seq > ? ORDER BY seq LIMIT ?`. O cursor é o `seq` com prefixo de versão, em base64url, opaco para o cliente e estável sob inserções concorrentes.
 
 ## 14. Observabilidade
 

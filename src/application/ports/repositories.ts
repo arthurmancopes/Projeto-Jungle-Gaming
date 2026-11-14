@@ -1,5 +1,6 @@
 import type { InboxMessage } from "../../domain/inbox-message";
 import type { WalletLedgerEntry } from "../../domain/ledger-entry";
+import type { Money } from "../../domain/money";
 import type { OutboxMessage } from "../../domain/outbox-message";
 import type { WagerTransaction } from "../../domain/wager-transaction";
 import type { Wallet } from "../../domain/wallet";
@@ -28,8 +29,24 @@ export interface WagerTransactionRepository {
   existsProcessedReversalOf(transactionId: string): Promise<boolean>;
 }
 
+export interface LedgerPageItem {
+  /** Posição estável do lançamento (sequência monotônica do banco); base do cursor. */
+  seq: string;
+  entry: WalletLedgerEntry;
+}
+
+export interface LedgerReconciliation {
+  storedBalance: Money;
+  calculatedBalance: Money;
+  checkedEntries: number;
+}
+
 export interface LedgerRepository {
   append(entry: WalletLedgerEntry): Promise<void>;
+  /** Lançamentos da wallet em ordem de seq, depois de afterSeq (exclusivo). */
+  listByWallet(walletId: string, afterSeq: string | undefined, limit: number): Promise<LedgerPageItem[]>;
+  /** Saldo materializado e saldo recalculado pelo ledger, lidos no mesmo snapshot. */
+  reconcile(walletId: string): Promise<LedgerReconciliation | undefined>;
 }
 
 export interface InboxRepository {

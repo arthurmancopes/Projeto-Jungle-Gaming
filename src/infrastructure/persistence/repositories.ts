@@ -3,6 +3,8 @@ import type { SqlEntityManager } from "@mikro-orm/postgresql";
 import { ConcurrencyConflictError } from "../../application/errors";
 import type {
   InboxRepository,
+  LedgerPageItem,
+  LedgerReconciliation,
   LedgerRepository,
   OutboxRepository,
   WagerTransactionRepository,
@@ -14,12 +16,13 @@ import type { WalletLedgerEntry } from "../../domain/ledger-entry";
 import type { OutboxMessage } from "../../domain/outbox-message";
 import type { WagerTransaction } from "../../domain/wager-transaction";
 import type { Wallet } from "../../domain/wallet";
-import { toInboxMessage, toWagerTransaction, toWallet } from "./mappers";
+import { toInboxMessage, toLedgerEntry, toMoney, toWagerTransaction, toWallet } from "./mappers";
 import {
   InboxMessageSchema,
   WagerTransactionSchema,
   WalletSchema,
   type InboxMessageRow,
+  type LedgerEntryRow,
   type WagerTransactionRow,
   type WalletRow,
 } from "./schemas";
@@ -222,6 +225,43 @@ class MikroOrmLedgerRepository implements LedgerRepository {
         entry.createdAt,
       ],
     );
+  }
+
+  async listByWallet(walletId: string, afterSeq: string | undefined, limit: number): Promise<LedgerPageItem[]> {
+    const rows = await this.em.execute<LedgerEntryRow[]>(
+      `select id, seq, wallet_id as "walletId", transaction_id as "transactionId", direction, amount, currency,
+              balance_before as "balanceBefore", balance_after as "balanceAfter", created_at as "createdAt"
+         from wallet_ledger_entries
+        where wallet_id = ? and seq > ?::bigint
+        order by seq
+        limit ?`,
+      [walletId, afterSeq ?? "0", limit],
+    );
+    return rows.map((row) => ({ seq: String(row.seq), entry: toLedgerEntry(row) }));
+  }
+
+  async reconcile(walletId: string): Promise<LedgerReconciliation | undefined> {
+    // Uma única instrução = um único snapshot: saldo e soma do ledger são sempre do mesmo instante.
+    const rows = await this.em.execute<
+      Array<{ currency: string; stored: string; calculated: string; entries: string }>
+    >(
+      `select w.currency,
+              w.balance::text as stored,
+              coalesce(sum(case l.direction when 'CREDIT' then l.amount else -l.amount end), 0)::numeric(20,2)::text as calculated,
+              count(l.id)::text as entries
+         from wallets w
+         left join wallet_ledger_entries l on l.wallet_id = w.id
+        where w.id = ?
+        group by w.id`,
+      [walletId],
+    );
+    const row = rows[0];
+    if (!row) return undefined;
+    return {
+      storedBalance: toMoney(row.stored, row.currency),
+      calculatedBalance: toMoney(row.calculated, row.currency),
+      checkedEntries: Number(row.entries),
+    };
   }
 }
 

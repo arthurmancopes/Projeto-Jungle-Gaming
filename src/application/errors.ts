@@ -40,6 +40,14 @@ export class InboxConflictError extends ApplicationError {
   }
 }
 
+/** Requisição malformada fora do corpo de negócio (header ausente, cursor inválido, limite inválido). */
+export class ValidationError extends ApplicationError {
+  readonly code = FailureCode.InvalidPayload;
+  constructor(message: string) {
+    super(message);
+  }
+}
+
 export class NotFoundError extends ApplicationError {
   readonly code = "NOT_FOUND";
   constructor(what: string) {

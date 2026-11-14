@@ -12,7 +12,7 @@ let app: INestApplication;
 let baseUrl: string;
 
 beforeAll(async () => {
-  app = await createApp({ logger: false });
+  app = await createApp({ logger: false, workers: false });
   await app.listen(0, "127.0.0.1");
   const address = app.getHttpServer().address() as { port: number };
   baseUrl = `http://127.0.0.1:${address.port}`;

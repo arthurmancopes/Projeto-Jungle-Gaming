@@ -27,6 +27,13 @@ export interface WagerTransactionRepository {
   ): Promise<WagerTransaction | undefined>;
   /** true se já existe REFUND/ROLLBACK PROCESSED apontando para a transação. */
   existsProcessedReversalOf(transactionId: string): Promise<boolean>;
+  /** Ids das transações PENDING_REFERENCE cuja próxima tentativa já venceu (leitura sem lock). */
+  findDuePendingReferenceIds(now: Date, limit: number): Promise<string[]>;
+  /**
+   * Trava a transação para reprocessamento se ela ainda estiver PENDING_REFERENCE.
+   * undefined quando outro worker já a travou (SKIP LOCKED) ou ela já saiu desse estado.
+   */
+  lockPendingReference(id: string): Promise<WagerTransaction | undefined>;
 }
 
 export interface LedgerPageItem {
@@ -58,4 +65,11 @@ export interface InboxRepository {
 
 export interface OutboxRepository {
   add(message: OutboxMessage): Promise<void>;
+  /**
+   * Reserva um lote de mensagens pendentes e vencidas com FOR UPDATE SKIP LOCKED:
+   * publishers concorrentes recebem lotes disjuntos, sem esperar uns pelos outros.
+   */
+  claimDue(now: Date, limit: number): Promise<OutboxMessage[]>;
+  /** Grava o resultado da tentativa (publicada, ou nova tentativa agendada). */
+  save(message: OutboxMessage): Promise<void>;
 }

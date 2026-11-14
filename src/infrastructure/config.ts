@@ -12,4 +12,11 @@ export const config = {
     wagerTransactionsDlq: "wager-transactions-dlq.fifo",
     events: "wagering-events.fifo",
   },
+  workers: {
+    /** WORKERS_ENABLED=false sobe só a API HTTP (sem consumidor nem workers). */
+    enabled: process.env.WORKERS_ENABLED !== "false",
+    outboxIntervalMs: Number(process.env.OUTBOX_INTERVAL_MS ?? 500),
+    pendingReferenceIntervalMs: Number(process.env.PENDING_REFERENCE_INTERVAL_MS ?? 1000),
+    shutdownTimeoutMs: Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 20_000),
+  },
 } as const;

@@ -16,13 +16,21 @@ import type { WalletLedgerEntry } from "../../domain/ledger-entry";
 import type { OutboxMessage } from "../../domain/outbox-message";
 import type { WagerTransaction } from "../../domain/wager-transaction";
 import type { Wallet } from "../../domain/wallet";
-import { toInboxMessage, toLedgerEntry, toMoney, toWagerTransaction, toWallet } from "./mappers";
+import {
+  toInboxMessage,
+  toLedgerEntry,
+  toMoney,
+  toOutboxMessage,
+  toWagerTransaction,
+  toWallet,
+} from "./mappers";
 import {
   InboxMessageSchema,
   WagerTransactionSchema,
   WalletSchema,
   type InboxMessageRow,
   type LedgerEntryRow,
+  type OutboxMessageRow,
   type WagerTransactionRow,
   type WalletRow,
 } from "./schemas";
@@ -105,6 +113,16 @@ class MikroOrmWalletRepository implements WalletRepository {
     }
   }
 }
+
+const TRANSACTION_COLUMNS = `
+  id, provider_id as "providerId", external_transaction_id as "externalTransactionId",
+  idempotency_key as "idempotencyKey", payload_hash as "payloadHash", wallet_id as "walletId",
+  player_id as "playerId", round_id as "roundId", game_id as "gameId", kind, amount, currency,
+  reference_external_transaction_id as "referenceExternalTransactionId",
+  reference_transaction_id as "referenceTransactionId", status, failure_code as "failureCode",
+  observed_balance as "observedBalance", reference_attempts as "referenceAttempts",
+  next_reference_attempt_at as "nextReferenceAttemptAt", created_at as "createdAt",
+  processed_at as "processedAt"`;
 
 class MikroOrmWagerTransactionRepository implements WagerTransactionRepository {
   constructor(private readonly em: SqlEntityManager) {}
@@ -192,6 +210,30 @@ class MikroOrmWagerTransactionRepository implements WagerTransactionRepository {
       [transactionId],
     );
     return rows.length > 0;
+  }
+
+  async findDuePendingReferenceIds(now: Date, limit: number): Promise<string[]> {
+    const rows = await this.em.execute<Array<{ id: string }>>(
+      `select id from wager_transactions
+        where status = 'PENDING_REFERENCE' and next_reference_attempt_at <= ?
+        order by next_reference_attempt_at
+        limit ?`,
+      [now, limit],
+    );
+    return rows.map((row) => row.id);
+  }
+
+  async lockPendingReference(id: string): Promise<WagerTransaction | undefined> {
+    // O status é reavaliado sob o lock: se outro worker concluiu a transação, a linha não volta.
+    const rows = await this.em.execute<WagerTransactionRow[]>(
+      `select ${TRANSACTION_COLUMNS}
+         from wager_transactions
+        where id = ? and status = 'PENDING_REFERENCE'
+          for no key update skip locked`,
+      [id],
+    );
+    const row = rows[0];
+    return row ? toWagerTransaction(row) : undefined;
   }
 
   private async findOne(where: Partial<WagerTransactionRow>): Promise<WagerTransaction | undefined> {
@@ -322,6 +364,30 @@ class MikroOrmOutboxRepository implements OutboxRepository {
         nullable(message.nextAttemptAt),
         nullable(message.publishedAt),
       ],
+    );
+  }
+
+  async claimDue(now: Date, limit: number): Promise<OutboxMessage[]> {
+    const rows = await this.em.execute<OutboxMessageRow[]>(
+      `select id, aggregate_id as "aggregateId", event_type as "eventType", payload,
+              occurred_at as "occurredAt", attempts, next_attempt_at as "nextAttemptAt",
+              published_at as "publishedAt"
+         from outbox_messages
+        where published_at is null
+          and (next_attempt_at is null or next_attempt_at <= ?)
+        order by occurred_at, id
+        limit ?
+          for update skip locked`,
+      [now, limit],
+    );
+    return rows.map(toOutboxMessage);
+  }
+
+  async save(message: OutboxMessage): Promise<void> {
+    await run(
+      this.em,
+      `update outbox_messages set attempts = ?, next_attempt_at = ?, published_at = ? where id = ?`,
+      [message.attempts, nullable(message.nextAttemptAt), nullable(message.publishedAt), message.id],
     );
   }
 }

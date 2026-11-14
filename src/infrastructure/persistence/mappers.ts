@@ -8,7 +8,14 @@ import {
   type WagerTransactionStatus,
 } from "../../domain/wager-transaction";
 import { Wallet } from "../../domain/wallet";
-import type { InboxMessageRow, LedgerEntryRow, WagerTransactionRow, WalletRow } from "./schemas";
+import { OutboxMessage } from "../../domain/outbox-message";
+import type {
+  InboxMessageRow,
+  LedgerEntryRow,
+  OutboxMessageRow,
+  WagerTransactionRow,
+  WalletRow,
+} from "./schemas";
 
 /**
  * Guarda de precisão: o driver devolve numeric como string. Se algum dia chegar
@@ -98,5 +105,20 @@ export function toInboxMessage(row: InboxMessageRow): InboxMessage {
     payloadHash: row.payloadHash,
     receivedAt: toDate(row.receivedAt),
     processedAt: toOptionalDate(row.processedAt),
+  });
+}
+
+export function toOutboxMessage(row: OutboxMessageRow): OutboxMessage {
+  // jsonb chega como objeto; aceita texto por segurança.
+  const payload = (typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload) as Record<string, unknown>;
+  return OutboxMessage.rehydrate({
+    id: row.id,
+    aggregateId: row.aggregateId,
+    eventType: row.eventType,
+    payload,
+    occurredAt: toDate(row.occurredAt),
+    attempts: Number(row.attempts),
+    nextAttemptAt: toOptionalDate(row.nextAttemptAt),
+    publishedAt: toOptionalDate(row.publishedAt),
   });
 }

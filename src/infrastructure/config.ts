@@ -18,5 +18,7 @@ export const config = {
     outboxIntervalMs: Number(process.env.OUTBOX_INTERVAL_MS ?? 500),
     pendingReferenceIntervalMs: Number(process.env.PENDING_REFERENCE_INTERVAL_MS ?? 1000),
     shutdownTimeoutMs: Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 20_000),
+    /** Por quanto tempo uma mensagem recebida fica invisível para as outras instâncias. */
+    visibilityTimeoutSeconds: Number(process.env.SQS_VISIBILITY_TIMEOUT_SECONDS ?? 30),
   },
 } as const;

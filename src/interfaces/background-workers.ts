@@ -57,7 +57,12 @@ export class BackgroundWorkers implements OnApplicationBootstrap, BeforeApplicat
     this.consumer = new WagerQueueConsumer(
       this.sqs,
       this.submit,
-      { queueUrl, dlqUrl, shutdownTimeoutMs: config.workers.shutdownTimeoutMs },
+      {
+        queueUrl,
+        dlqUrl,
+        shutdownTimeoutMs: config.workers.shutdownTimeoutMs,
+        visibilityTimeoutSeconds: config.workers.visibilityTimeoutSeconds,
+      },
       this.logger,
       {
         onOutcome: (outcome, info) => {

@@ -20,5 +20,7 @@ export const config = {
     shutdownTimeoutMs: Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 20_000),
     /** Por quanto tempo uma mensagem recebida fica invisível para as outras instâncias. */
     visibilityTimeoutSeconds: Number(process.env.SQS_VISIBILITY_TIMEOUT_SECONDS ?? 30),
+    /** Duração máxima do long polling do consumidor. */
+    waitTimeSeconds: Number(process.env.SQS_WAIT_TIME_SECONDS ?? 10),
   },
 } as const;

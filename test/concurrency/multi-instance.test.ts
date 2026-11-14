@@ -3,7 +3,7 @@ import { SendMessageCommand, type SQSClient } from "@aws-sdk/client-sqs";
 import { config } from "../../src/infrastructure/config";
 import { createSqsClient, resolveQueueUrl } from "../../src/infrastructure/sqs/sqs-client";
 import { command, createHarness, expectConsistent, openWallet, sql, uuid, type Harness } from "../integration/harness";
-import { AppInstance, waitFor } from "./instances";
+import { ABANDONED_RECEIVE_SETTLE_MS, AppInstance, waitFor } from "./instances";
 
 /**
  * Três instâncias reais da aplicação (processos separados) sobre o mesmo PostgreSQL e o mesmo SQS.
@@ -32,6 +32,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await Promise.all(instances.map((instance) => instance.kill()));
+  // Long polls abandonados pelas instâncias mortas ainda podem "receber" mensagens no broker.
+  await Bun.sleep(ABANDONED_RECEIVE_SETTLE_MS);
   sqs?.destroy();
   await h?.close();
 });

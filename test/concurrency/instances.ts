@@ -5,6 +5,17 @@ import { join } from "node:path";
 const ROOT = join(import.meta.dir, "..", "..");
 const LOG_DIR = join(ROOT, "temp", "instances");
 
+export const INSTANCE_VISIBILITY_TIMEOUT_SECONDS = 5;
+export const INSTANCE_WAIT_TIME_SECONDS = 2;
+
+/**
+ * Uma instância morta no meio de um long polling deixa a requisição aberta no broker por até
+ * WaitTimeSeconds, e a mensagem entregue a ela fica invisível por mais VisibilityTimeout.
+ * Esperar esse tempo depois de matar instâncias devolve a fila limpa para os próximos testes.
+ */
+export const ABANDONED_RECEIVE_SETTLE_MS =
+  (INSTANCE_WAIT_TIME_SECONDS + INSTANCE_VISIBILITY_TIMEOUT_SECONDS + 2) * 1000;
+
 /**
  * Uma instância real da aplicação (bun src/main.ts) em um processo separado:
  * API HTTP, consumidor SQS e workers, como em produção. Os logs vão para temp/instances/.
@@ -34,6 +45,8 @@ export class AppInstance {
     mkdirSync(LOG_DIR, { recursive: true });
     this.generation++;
     this.process = Bun.spawn([process.execPath, "src/main.ts"], {
+      // Sem herdar o terminal: no Windows, isso evita que o filho sobreviva ao encerramento.
+      stdin: "ignore",
       cwd: ROOT,
       env: {
         ...process.env,
@@ -41,7 +54,8 @@ export class AppInstance {
         WORKERS_ENABLED: "true",
         DB_POOL_MAX: "8",
         LOG_LEVEL: "info",
-        SQS_VISIBILITY_TIMEOUT_SECONDS: "5",
+        SQS_VISIBILITY_TIMEOUT_SECONDS: String(INSTANCE_VISIBILITY_TIMEOUT_SECONDS),
+        SQS_WAIT_TIME_SECONDS: String(INSTANCE_WAIT_TIME_SECONDS),
         OUTBOX_INTERVAL_MS: "200",
         PENDING_REFERENCE_INTERVAL_MS: "300",
         SHUTDOWN_TIMEOUT_MS: "10000",
@@ -52,11 +66,33 @@ export class AppInstance {
     await this.waitReady();
   }
 
+  get pid(): number | undefined {
+    return this.process?.pid;
+  }
+
   /** SIGKILL: o processo morre sem desligamento gracioso (simula crash). */
   async kill(): Promise<void> {
     if (!this.process) return;
     this.process.kill("SIGKILL");
     await this.process.exited;
+    await this.assertStopped();
+  }
+
+  /** Garante que nada mais responde na porta: uma instância viva consumiria a fila de outros testes. */
+  private async assertStopped(): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      try {
+        await fetch(`${this.baseUrl}/health/live`, {
+          headers: { connection: "close" },
+          signal: AbortSignal.timeout(500),
+        });
+      } catch {
+        return; // conexão recusada: o processo saiu de fato
+      }
+      await Bun.sleep(200);
+    }
+    throw new Error(`${this.name} (pid ${this.process?.pid}) still answers on port ${this.port} after being killed`);
   }
 
   /** SIGTERM: desligamento gracioso. Devolve o código de saída. */

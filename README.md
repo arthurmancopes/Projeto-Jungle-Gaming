@@ -65,6 +65,7 @@ Todas as variáveis têm padrão que funciona com o Docker Compose local (veja `
 | `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `us-east-1`, `test`, `test` | credenciais do LocalStack |
 | `WORKERS_ENABLED` | `true` | `false` sobe só a API HTTP |
 | `SQS_VISIBILITY_TIMEOUT_SECONDS` | `30` | tempo até outra instância assumir uma mensagem abandonada |
+| `SQS_WAIT_TIME_SECONDS` | `10` | duração do long polling do consumidor |
 | `OUTBOX_INTERVAL_MS` | `500` | intervalo do publicador da outbox |
 | `PENDING_REFERENCE_INTERVAL_MS` | `1000` | intervalo do worker de referências pendentes |
 | `SHUTDOWN_TIMEOUT_MS` | `20000` | espera pelas mensagens em andamento no `SIGTERM` |

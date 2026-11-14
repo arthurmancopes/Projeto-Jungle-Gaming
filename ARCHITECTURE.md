@@ -267,6 +267,8 @@ A redrive policy (`maxReceiveCount = 5`) é a rede de segurança: uma mensagem q
 
 O visibility timeout (padrão 30s, `SQS_VISIBILITY_TIMEOUT_SECONDS`) é o tempo que uma instância morta sem aviso leva para "devolver" o que estava processando.
 
+Uma instância morta no meio de um long polling (`SQS_WAIT_TIME_SECONDS`, padrão 10s) pode deixar a requisição aberta no broker; uma mensagem entregue a ela fica invisível até o visibility timeout, embora ninguém a processe. Os testes mostraram isso no LocalStack depois de `SIGKILL`. Não afeta a correção, porque a mensagem volta e é processada normalmente, mas atrasa a entrega em até `WaitTimeSeconds + VisibilityTimeout`. Por isso o visibility timeout deve ser curto o bastante para a latência aceitável de recuperação, e longo o bastante para cobrir o processamento de um lote.
+
 ## 12. Transactional Outbox
 
 Os eventos são gravados em `outbox_messages` na mesma transação do efeito financeiro. Nada é publicado antes do commit, porque quem publica é um worker separado que só enxerga linhas commitadas.

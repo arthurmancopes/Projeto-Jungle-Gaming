@@ -44,7 +44,44 @@ beforeAll(async () => {
     resolveQueueUrl(sqs, config.queues.events),
   ]);
   await Promise.all([queueUrl, dlqUrl, eventsUrl].map((url) => sqs.send(new PurgeQueueCommand({ QueueUrl: url }))));
+  await assertNoForeignConsumer();
 });
+
+/**
+ * Estes testes precisam ser os únicos leitores da fila. Se uma instância da aplicação
+ * estiver rodando (bun run start, ou um processo que sobrou de outro teste), ela consome
+ * as mensagens dos testes e as falhas ficam confusas. Aqui a situação é detectada e explicada.
+ */
+async function assertNoForeignConsumer(): Promise<void> {
+  const probeId = `probe-${uuid()}`;
+  await sqs.send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify({ probe: probeId }),
+      MessageGroupId: probeId,
+      MessageDeduplicationId: probeId,
+    }),
+  );
+  // Folga para long polls abandonados por processos mortos em testes anteriores expirarem.
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const { Messages = [] } = await sqs.send(
+      new ReceiveMessageCommand({ QueueUrl: queueUrl, MaxNumberOfMessages: 10, WaitTimeSeconds: 2 }),
+    );
+    for (const message of Messages) {
+      await sqs.send(new DeleteMessageCommand({ QueueUrl: queueUrl, ReceiptHandle: message.ReceiptHandle }));
+      if (message.Body?.includes(probeId)) return;
+    }
+  }
+  // Uma instância da aplicação que pegou a mensagem a descarta na DLQ como contrato inválido.
+  const inDlq = (await drain(dlqUrl)).some((body) => body.includes(probeId));
+  throw new Error(
+    "Outro processo está consumindo a fila wager-transactions.fifo (a mensagem de verificação não chegou ao teste" +
+      (inDlq ? "; ela foi parar na DLQ, ou seja, uma instância da aplicação a recebeu). " : "). ") +
+      "Encerre qualquer `bun run start` aberto e processos bun que tenham sobrado " +
+      "(PowerShell: Get-Process bun) e rode os testes de novo.",
+  );
+}
 afterAll(async () => {
   sqs.destroy();
   await h.close();

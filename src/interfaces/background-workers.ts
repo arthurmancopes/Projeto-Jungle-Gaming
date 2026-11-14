@@ -62,6 +62,7 @@ export class BackgroundWorkers implements OnApplicationBootstrap, BeforeApplicat
         dlqUrl,
         shutdownTimeoutMs: config.workers.shutdownTimeoutMs,
         visibilityTimeoutSeconds: config.workers.visibilityTimeoutSeconds,
+        waitTimeSeconds: config.workers.waitTimeSeconds,
       },
       this.logger,
       {

@@ -15,7 +15,8 @@
     "infra:down": "docker compose down -v",
     "migration:up": "bun src/infrastructure/persistence/migrate.ts up",
     "migration:down": "bun src/infrastructure/persistence/migrate.ts down",
-    "migration:status": "bun src/infrastructure/persistence/migrate.ts status"
+    "migration:status": "bun src/infrastructure/persistence/migrate.ts status",
+    "test:load": "bun test/load/load-test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.700.0",

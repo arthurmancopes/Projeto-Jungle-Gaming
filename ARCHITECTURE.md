@@ -379,7 +379,7 @@ Onde há dublês, eles simulam só a falha, nunca o banco ou a fila:
 ## 17. Trade-offs e limitações conhecidas
 
 - **Wallet quente é serializada.** O lock pessimista limita a vazão de uma única wallet ao tempo de uma transação. Aceitável para um jogador; para contas agregadas de alto volume seria preciso outra modelagem.
-- **Publicação com lock aberto.** O publisher mantém o lock das linhas da outbox durante a chamada ao SQS. É simples e seguro, mas segura uma conexão pelo tempo da chamada. Alternativa: marcar um `claimed_until` e publicar fora da transação.
+- **Publicação com lock aberto.** O publisher mantém o lock das linhas da outbox durante a chamada ao SQS, publicando um evento por chamada. É simples e seguro, mas segura uma conexão pelo tempo da chamada e limitou a publicação a ~300 eventos/s no teste de carga. Alternativa: marcar um `claimed_until`, publicar fora da transação com `SendMessageBatch` e só então marcar.
 - **Outbox por polling.** O atraso mínimo de publicação é o intervalo do polling. `LISTEN/NOTIFY` reduziria a latência.
 - **Sem retenção.** Inbox, outbox publicada e transações antigas não são expurgadas nem particionadas.
 - **Rejeição por wallet inexistente não é persistida** (seção 8, item 5).
@@ -389,4 +389,4 @@ Onde há dublês, eles simulam só a falha, nunca o banco ou a fila:
 - **`SIGTERM` no Windows.** O Windows não entrega `SIGTERM` a processos; o encerramento é sempre forçado. O desligamento gracioso funciona em Linux e macOS (e em contêineres); o teste correspondente é pulado no Windows, e a recuperação após encerramento forçado é coberta pelo teste de `SIGKILL`.
 - **`FAILED` não é produzido** por nenhum fluxo atual (seção 7).
 - **LocalStack, não AWS.** O comportamento de FIFO, redrive e visibilidade foi validado no LocalStack. Na AWS real, `PurgeQueue` tem limite de uma chamada por minuto (usado só nos testes) e a cota de mensagens em voo por grupo pode diferir.
-- **Sem teste de carga.** Não há `bun run test:load`; os testes de concorrência medem correção, não vazão.
+- **Vazão medida, não otimizada.** O teste de carga (`LOAD_TEST.md`) mostrou cerca de 660 req/s com wallets distribuídas e 135 req/s numa única wallet (7,4 ms de lock por transação), sem erros e sem inconsistência. Também mostrou dois gargalos fora do caminho financeiro: o publicador da outbox ficou cerca de 4 vezes abaixo da taxa de geração de eventos no pico (lag de 23 s) e o consumidor SQS processa um lote de 10 mensagens por vez por instância (137 msg/s com três instâncias). As melhorias estão listadas no `LOAD_TEST.md`.

@@ -27,6 +27,8 @@ export class AppInstance {
   constructor(
     readonly name: string,
     readonly port: number,
+    /** Variáveis que sobrescrevem os padrões abaixo (usado pelo teste de carga). */
+    private readonly envOverrides: Record<string, string> = {},
   ) {}
 
   get baseUrl(): string {
@@ -59,6 +61,7 @@ export class AppInstance {
         OUTBOX_INTERVAL_MS: "200",
         PENDING_REFERENCE_INTERVAL_MS: "300",
         SHUTDOWN_TIMEOUT_MS: "10000",
+        ...this.envOverrides,
       },
       stdout: Bun.file(this.logPath),
       stderr: Bun.file(`${this.logPath}.err`),

@@ -2,7 +2,7 @@
 
 Serviço financeiro distribuído que processa transações de apostas (`BET`, `WIN`, `LOSS`, `REFUND`, `ROLLBACK`) recebidas de vários provedores de jogos, por HTTP e por SQS, mantendo saldo e ledger corretos com mensagens duplicadas, fora de ordem e processadas por várias instâncias ao mesmo tempo.
 
-As decisões técnicas, os trade-offs e as limitações estão em [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+As decisões técnicas, os trade-offs e as limitações estão em [`ARCHITECTURE.md`](./ARCHITECTURE.md). O teste de carga, com metodologia, resultados e análise, está em [`LOAD_TEST.md`](./LOAD_TEST.md).
 
 ## Stack
 
@@ -35,6 +35,7 @@ bun run test:integration   # API HTTP, persistência, idempotência, SQS, outbox
 bun run test:concurrency   # disputa de saldo e 3 instâncias da aplicação em processos separados
 bun test                   # tudo
 bun run typecheck
+bun run test:load          # teste de carga (ver LOAD_TEST.md)
 ```
 
 Não deixe `bun run start` rodando enquanto os testes de integração e de concorrência executam: a aplicação consumiria as mesmas filas.
@@ -50,6 +51,7 @@ Os logs das instâncias criadas pelo teste `multi-instance` ficam em `temp/insta
 | `bun run infra:up` / `infra:down` | sobe / derruba PostgreSQL e LocalStack |
 | `bun run migration:up` / `migration:down` / `migration:status` | migrations |
 | `bun run test:unit` / `test:integration` / `test:concurrency` | suítes de teste |
+| `bun run test:load` | teste de carga com 3 instâncias; relatório em `load-test-results/` |
 | `bun run typecheck` | `tsc --noEmit` |
 
 ## Configuração

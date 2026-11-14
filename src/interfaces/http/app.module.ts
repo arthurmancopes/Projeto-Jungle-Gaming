@@ -3,6 +3,7 @@ import { MikroORM } from "@mikro-orm/postgresql";
 import { Inject, Injectable, Module, type DynamicModule, type OnApplicationShutdown } from "@nestjs/common";
 import { CreateWalletUseCase } from "../../application/create-wallet.use-case";
 import type { Logger } from "../../application/ports/logger";
+import type { Metrics } from "../../application/ports/metrics";
 import type { UnitOfWork } from "../../application/ports/unit-of-work";
 import { PublishOutboxUseCase } from "../../application/publish-outbox.use-case";
 import { GetWagerTransactionQuery, GetWalletQuery, ListLedgerQuery } from "../../application/queries";
@@ -12,7 +13,9 @@ import { SubmitWagerTransactionUseCase } from "../../application/submit-wager-tr
 import { WagerProcessor } from "../../application/wager-processor";
 import { config } from "../../infrastructure/config";
 import { PinoLogger } from "../../infrastructure/observability/logger";
-import { LoggingReconciliationAlert } from "../../infrastructure/observability/reconciliation-alert";
+import { createCollectors } from "../../infrastructure/observability/collectors";
+import { PrometheusMetrics } from "../../infrastructure/observability/metrics";
+import { ObservableReconciliationAlert } from "../../infrastructure/observability/reconciliation-alert";
 import ormConfig from "../../infrastructure/persistence/mikro-orm.config";
 import { MikroOrmUnitOfWork } from "../../infrastructure/persistence/unit-of-work";
 import { createSqsClient, resolveQueueUrl } from "../../infrastructure/sqs/sqs-client";
@@ -21,12 +24,14 @@ import { SystemClock, UuidV7Generator } from "../../infrastructure/system";
 import { BackgroundWorkers } from "../background-workers";
 import { AuthGuard, UnauthenticatedProviderIdentity } from "./auth.guard";
 import { HealthController } from "./health.controller";
+import { MetricsController } from "./metrics.controller";
 import {
   CREATE_WALLET,
   GET_TRANSACTION,
   GET_WALLET,
   LIST_LEDGER,
   LOGGER,
+  METRICS,
   ORM,
   PROVIDER_IDENTITY,
   PUBLISH_OUTBOX,
@@ -67,7 +72,7 @@ export class AppModule {
   static forRoot(options: RuntimeOptions): DynamicModule {
     return {
       module: AppModule,
-      controllers: [WalletsController, WageringController, HealthController],
+      controllers: [WalletsController, WageringController, HealthController, MetricsController],
       providers: [
         AuthGuard,
         InfrastructureLifecycle,
@@ -77,7 +82,16 @@ export class AppModule {
         { provide: ORM, useFactory: () => MikroORM.init(ormConfig) },
         { provide: SQS_CLIENT, useFactory: () => createSqsClient() },
         { provide: PROVIDER_IDENTITY, useFactory: () => new UnauthenticatedProviderIdentity() },
-        { provide: UNIT_OF_WORK, useFactory: (orm: MikroORM) => new MikroOrmUnitOfWork(orm), inject: [ORM] },
+        {
+          provide: METRICS,
+          useFactory: (orm: MikroORM, sqs: SQSClient) => new PrometheusMetrics(createCollectors(orm, sqs)),
+          inject: [ORM, SQS_CLIENT],
+        },
+        {
+          provide: UNIT_OF_WORK,
+          useFactory: (orm: MikroORM, metrics: Metrics) => new MikroOrmUnitOfWork(orm, { metrics }),
+          inject: [ORM, METRICS],
+        },
         {
           provide: CREATE_WALLET,
           useFactory: (uow: UnitOfWork) => new CreateWalletUseCase(uow, ids, clock),
@@ -85,9 +99,9 @@ export class AppModule {
         },
         {
           provide: SUBMIT_WAGER,
-          useFactory: (uow: UnitOfWork) =>
-            new SubmitWagerTransactionUseCase(uow, new WagerProcessor(ids, clock), ids, clock),
-          inject: [UNIT_OF_WORK],
+          useFactory: (uow: UnitOfWork, metrics: Metrics) =>
+            new SubmitWagerTransactionUseCase(uow, new WagerProcessor(ids, clock), ids, clock, metrics),
+          inject: [UNIT_OF_WORK, METRICS],
         },
         { provide: GET_WALLET, useFactory: (uow: UnitOfWork) => new GetWalletQuery(uow), inject: [UNIT_OF_WORK] },
         {
@@ -98,23 +112,24 @@ export class AppModule {
         { provide: LIST_LEDGER, useFactory: (uow: UnitOfWork) => new ListLedgerQuery(uow), inject: [UNIT_OF_WORK] },
         {
           provide: RECONCILE_WALLET,
-          useFactory: (uow: UnitOfWork) => new ReconcileWalletUseCase(uow, new LoggingReconciliationAlert()),
-          inject: [UNIT_OF_WORK],
+          useFactory: (uow: UnitOfWork, logger: Logger, metrics: Metrics) =>
+            new ReconcileWalletUseCase(uow, new ObservableReconciliationAlert(logger, metrics)),
+          inject: [UNIT_OF_WORK, LOGGER, METRICS],
         },
         {
           provide: PUBLISH_OUTBOX,
-          useFactory: async (uow: UnitOfWork, sqs: SQSClient, logger: Logger) => {
+          useFactory: async (uow: UnitOfWork, sqs: SQSClient, logger: Logger, metrics: Metrics) => {
             // Sem workers a fila de eventos não é usada: não exige o SQS no ar para subir a API.
             const queueUrl = options.workers ? await resolveQueueUrl(sqs, config.queues.events) : "";
-            return new PublishOutboxUseCase(uow, new SqsEventPublisher(sqs, queueUrl), clock, logger);
+            return new PublishOutboxUseCase(uow, new SqsEventPublisher(sqs, queueUrl), clock, logger, metrics);
           },
-          inject: [UNIT_OF_WORK, SQS_CLIENT, LOGGER],
+          inject: [UNIT_OF_WORK, SQS_CLIENT, LOGGER, METRICS],
         },
         {
           provide: RETRY_PENDING_REFERENCES,
-          useFactory: (uow: UnitOfWork, logger: Logger) =>
-            new RetryPendingReferencesUseCase(uow, new WagerProcessor(ids, clock), clock, logger),
-          inject: [UNIT_OF_WORK, LOGGER],
+          useFactory: (uow: UnitOfWork, logger: Logger, metrics: Metrics) =>
+            new RetryPendingReferencesUseCase(uow, new WagerProcessor(ids, clock), clock, logger, metrics),
+          inject: [UNIT_OF_WORK, LOGGER, METRICS],
         },
       ],
     };

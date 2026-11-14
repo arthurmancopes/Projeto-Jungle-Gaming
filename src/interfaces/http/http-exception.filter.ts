@@ -9,6 +9,7 @@ import {
   WalletNotFoundError,
 } from "../../application/errors";
 import { DomainError, FailureCode, InvalidMoneyError, InvalidTransactionError } from "../../domain/errors";
+import { noopLogger, type Logger } from "../../application/ports/logger";
 import { translateError } from "../../infrastructure/persistence/unit-of-work";
 import type { HttpRequest, HttpResponse } from "./http-types";
 
@@ -69,6 +70,8 @@ export function mapError(error: unknown): Mapped {
 
 @Catch()
 export class HttpErrorFilter implements ExceptionFilter {
+  constructor(private readonly logger: Logger = noopLogger) {}
+
   catch(error: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
     const request = http.getRequest<HttpRequest>();
@@ -76,15 +79,12 @@ export class HttpErrorFilter implements ExceptionFilter {
     const mapped = mapError(error);
 
     if (mapped.status >= 500 && mapped.status !== 503) {
-      console.error(
-        JSON.stringify({
-          level: "error",
-          time: new Date().toISOString(),
-          msg: "unhandled error",
-          correlationId: request.correlationId,
-          error: error instanceof Error ? { name: error.name, message: error.message } : String(error),
-        }),
-      );
+      this.logger.error("unhandled error", {
+        correlationId: request.correlationId,
+        error: error instanceof Error ? { name: error.name, message: error.message } : String(error),
+      });
+    } else if (mapped.status === 503) {
+      this.logger.warn("transient failure", { correlationId: request.correlationId, code: mapped.code });
     }
     if (mapped.retryAfterSeconds !== undefined) {
       response.setHeader("Retry-After", String(mapped.retryAfterSeconds));

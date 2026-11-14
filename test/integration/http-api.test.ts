@@ -252,6 +252,56 @@ describe("Consultas", () => {
   });
 });
 
+/** Soma os valores das séries de uma métrica que contêm todos os rótulos pedidos. */
+function metricValue(text: string, name: string, labels: Record<string, string> = {}): number {
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith(`${name}{`) || line.startsWith(`${name} `))
+    .filter((line) => Object.entries(labels).every(([key, value]) => line.includes(`${key}="${value}"`)))
+    .reduce((sum, line) => sum + Number(line.slice(line.lastIndexOf(" ") + 1)), 0);
+}
+
+describe("Métricas", () => {
+  test("GET /metrics expõe transações por status, duplicatas, latência, outbox e DLQ", async () => {
+    const before = await (await fetch(`${baseUrl}/metrics`, { headers: { connection: "close" } })).text();
+
+    const wallet = await createWallet("100.00");
+    const bet = transaction(wallet, "BET", "10.00");
+    await submit(bet);
+    await submit(bet); // replay
+    await submit(transaction(wallet, "BET", "500.00")); // rejeitada
+
+    const response = await fetch(`${baseUrl}/metrics`, { headers: { connection: "close" } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    const after = await response.text();
+
+    const delta = (name: string, labels: Record<string, string>) =>
+      metricValue(after, name, labels) - metricValue(before, name, labels);
+
+    expect(delta("wager_transactions_total", { source: "http", kind: "BET", status: "PROCESSED" })).toBe(1);
+    expect(
+      delta("wager_transactions_total", { source: "http", status: "REJECTED", failure_code: "INSUFFICIENT_FUNDS" }),
+    ).toBe(1);
+    expect(delta("wager_duplicates_total", { source: "http", reason: "idempotency_key" })).toBe(1);
+    expect(delta("wager_processing_duration_seconds_count", { source: "http" })).toBe(3);
+
+    for (const name of [
+      "wager_retries_total",
+      "wager_dlq_messages_total",
+      "wallet_lock_conflicts_total",
+      "wallet_reconciliation_mismatch_total",
+      "outbox_lag_seconds",
+      "outbox_pending_messages",
+      "sqs_dlq_messages",
+    ]) {
+      expect(after).toContain(`# TYPE ${name} `);
+    }
+    expect(metricValue(after, "outbox_pending_messages")).toBeGreaterThan(0); // sem workers, nada é publicado
+    expect(metricValue(after, "outbox_lag_seconds")).toBeGreaterThan(0);
+  });
+});
+
 describe("Health", () => {
   test("GET /health/live responde sem tocar em dependências", async () => {
     const response = await call("GET", "/health/live");

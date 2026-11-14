@@ -295,19 +295,24 @@ Eventos (uma subclasse de `IntegrationEvent` por tipo, com `eventType` e `versio
 
 Logs em JSON (pino) com `correlationId`, `messageId`, `transactionId`, `walletId` e `providerId`. Valores monetários e payloads completos não são logados.
 
-Métricas (Prometheus, em `GET /metrics`):
+Métricas (Prometheus, em `GET /metrics`, sem autenticação):
 
-| Métrica                                              | Tipo                                         |
-| ---------------------------------------------------- | -------------------------------------------- |
-| `wager_transactions_total{kind,status,failure_code}` | counter                                      |
-| `wager_duplicates_total{source}`                     | counter                                      |
-| `wager_retries_total{reason}`                        | counter                                      |
-| `wager_dlq_messages_total`                           | counter                                      |
-| `wallet_lock_conflicts_total`                        | counter                                      |
-| `outbox_lag_seconds`                                 | gauge (idade do evento pendente mais antigo) |
-| `outbox_pending_messages`                            | gauge                                        |
-| `wager_processing_duration_seconds{source}`          | histogram                                    |
-| `wallet_reconciliation_mismatch_total`               | counter                                      |
+| Métrica | Tipo | O que mede |
+|---|---|---|
+| `wager_transactions_total{source,kind,status,failure_code}` | counter | transações concluídas pela primeira vez (replays não contam) |
+| `wager_duplicates_total{source,reason}` | counter | replays detectados, por `idempotency_key` ou `inbox` |
+| `wager_retries_total{component}` | counter | novas tentativas do consumidor SQS, da outbox e do worker de referências |
+| `wager_dlq_messages_total{reason}` | counter | mensagens enviadas para a DLQ pelo consumidor |
+| `sqs_dlq_messages` | gauge | profundidade da DLQ, inclusive mensagens movidas pela redrive policy |
+| `wallet_lock_conflicts_total` | counter | timeout de lock, deadlock ou `version` divergente |
+| `outbox_lag_seconds` | gauge | idade do evento pendente mais antigo (0 com a outbox vazia) |
+| `outbox_pending_messages` | gauge | eventos ainda não publicados |
+| `wager_processing_duration_seconds{source,outcome}` | histogram | latência do processamento |
+| `wallet_reconciliation_mismatch_total` | counter | reconciliações com divergência |
+
+`source` é `http`, `sqs` ou `pending_reference`. Os contadores de negócio são incrementados só depois do commit, para que uma transação desfeita não seja contada. Os gauges de outbox e DLQ são calculados no momento da coleta; se o banco ou o SQS estiverem indisponíveis, a coleta mantém o último valor em vez de falhar (o readiness já sinaliza o problema). Também são exportadas as métricas padrão do processo (CPU, memória, event loop).
+
+Logs: além das linhas de domínio, cada requisição HTTP gera uma linha com método, rota (sem query string), status, duração e `correlationId`. Os logs internos do NestJS passam pelo mesmo logger, então toda a saída é JSON.
 
 Health: `/health/live` só indica que o processo responde; `/health/ready` executa `SELECT 1` e `GetQueueAttributes`. Ambos sem autenticação.
 

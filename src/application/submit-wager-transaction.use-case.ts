@@ -8,6 +8,7 @@ import {
 } from "../domain/wager-transaction";
 import { IdempotencyConflictError, InboxConflictError, WalletNotFoundError } from "./errors";
 import { computePayloadHash } from "./payload-hash";
+import { noopMetrics, type Metrics, type WagerSource } from "./ports/metrics";
 import type { Clock, IdGenerator } from "./ports/system";
 import type { TransactionContext, UnitOfWork } from "./ports/unit-of-work";
 import type { WagerProcessor } from "./wager-processor";
@@ -56,16 +57,35 @@ export class SubmitWagerTransactionUseCase {
     private readonly processor: WagerProcessor,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
+    private readonly metrics: Metrics = noopMetrics,
   ) {}
 
   async execute(command: SubmitWagerTransactionCommand): Promise<SubmitWagerTransactionResult> {
+    const source: WagerSource = command.inbox ? "sqs" : "http";
+    const started = performance.now();
+    let outcome = "error";
+    try {
+      const result = await this.submit(command, source);
+      outcome = result.idempotentReplay ? "replay" : result.status.toLowerCase();
+      return result;
+    } finally {
+      this.metrics.processingDuration({ source, outcome }, (performance.now() - started) / 1000);
+    }
+  }
+
+  private async submit(
+    command: SubmitWagerTransactionCommand,
+    source: WagerSource,
+  ): Promise<SubmitWagerTransactionResult> {
     // Validação de contrato fora da transação: payload inválido não toca o banco.
     const money = validate(command);
     const payloadHash = computePayloadHash(command);
+    let duplicateMessage = false;
 
-    return this.uow.run(async (ctx) => {
+    const result = await this.uow.run(async (ctx) => {
       // 1. Inbox: dedup persistente por (consumerName, messageId).
       const inboxMessage = command.inbox ? await this.receive(ctx, command.inbox, payloadHash) : undefined;
+      duplicateMessage = command.inbox !== undefined && inboxMessage === undefined;
 
       // 2. A wallet precisa existir e pertencer ao player (leitura sem lock).
       const existingWallet = await ctx.wallets.findById(command.walletId);
@@ -108,6 +128,19 @@ export class SubmitWagerTransactionUseCase {
       }
       return result;
     });
+
+    // Métricas só depois do commit: uma transação desfeita não conta.
+    if (result.idempotentReplay) {
+      this.metrics.duplicateDetected({ source, reason: duplicateMessage ? "inbox" : "idempotency_key" });
+    } else {
+      this.metrics.transactionCompleted({
+        source,
+        kind: command.kind,
+        status: result.status,
+        ...(result.failureCode !== undefined ? { failureCode: result.failureCode } : {}),
+      });
+    }
+    return result;
   }
 
   /** Devolve a mensagem recém-registrada, ou undefined se for uma reentrega já processada. */

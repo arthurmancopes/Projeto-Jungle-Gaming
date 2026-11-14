@@ -1,5 +1,6 @@
 import { WagerTransactionStatus } from "../domain/wager-transaction";
 import { noopLogger, type Logger } from "./ports/logger";
+import { noopMetrics, type Metrics } from "./ports/metrics";
 import type { Clock } from "./ports/system";
 import type { UnitOfWork } from "./ports/unit-of-work";
 import type { WagerProcessor } from "./wager-processor";
@@ -27,6 +28,7 @@ export class RetryPendingReferencesUseCase {
     private readonly processor: WagerProcessor,
     private readonly clock: Clock,
     private readonly logger: Logger = noopLogger,
+    private readonly metrics: Metrics = noopMetrics,
     private readonly batchSize = 50,
   ) {}
 
@@ -44,19 +46,37 @@ export class RetryPendingReferencesUseCase {
     };
 
     for (const id of ids) {
+      const started = performance.now();
       try {
-        const status = await this.uow.run(async (ctx) => {
+        const done = await this.uow.run(async (ctx) => {
           // Ordem de locks igual à da submissão: linha da transação, depois wallet.
           const transaction = await ctx.transactions.lockPendingReference(id);
           if (!transaction) return undefined; // outro worker pegou, ou já foi concluída
-          const { outcome } = await this.processor.process(ctx, transaction, `pending-reference:${id}`);
-          return outcome.status;
+          await this.processor.process(ctx, transaction, `pending-reference:${id}`);
+          return { kind: transaction.kind, status: transaction.status, failureCode: transaction.failureCode };
         });
 
-        if (status === undefined) result.skipped++;
-        else if (status === WagerTransactionStatus.Processed) result.processed++;
-        else if (status === WagerTransactionStatus.Rejected) result.rejected++;
-        else result.stillPending++;
+        if (done === undefined) {
+          result.skipped++;
+          continue;
+        }
+        this.metrics.processingDuration(
+          { source: "pending_reference", outcome: done.status.toLowerCase() },
+          (performance.now() - started) / 1000,
+        );
+        if (done.status === WagerTransactionStatus.PendingReference) {
+          result.stillPending++;
+          this.metrics.retryScheduled("pending_reference");
+          continue;
+        }
+        if (done.status === WagerTransactionStatus.Processed) result.processed++;
+        else result.rejected++;
+        this.metrics.transactionCompleted({
+          source: "pending_reference",
+          kind: done.kind,
+          status: done.status,
+          ...(done.failureCode !== undefined ? { failureCode: done.failureCode } : {}),
+        });
       } catch (error) {
         // Falha isolada: as outras transações do lote seguem; esta será tentada no próximo ciclo.
         result.failed++;

@@ -1,6 +1,7 @@
 import type { OutboxMessage } from "../domain/outbox-message";
 import type { EventPublisher } from "./ports/event-publisher";
 import { noopLogger, type Logger } from "./ports/logger";
+import { noopMetrics, type Metrics } from "./ports/metrics";
 import type { Clock } from "./ports/system";
 import type { UnitOfWork } from "./ports/unit-of-work";
 
@@ -27,11 +28,12 @@ export class PublishOutboxUseCase {
     private readonly publisher: EventPublisher,
     private readonly clock: Clock,
     private readonly logger: Logger = noopLogger,
+    private readonly metrics: Metrics = noopMetrics,
     private readonly batchSize = 50,
   ) {}
 
   async execute(): Promise<PublishOutboxResult> {
-    return this.uow.run(async (ctx) => {
+    const outcome = await this.uow.run(async (ctx) => {
       const messages = await ctx.outbox.claimDue(this.clock.now(), this.batchSize);
       const result: PublishOutboxResult = { claimed: messages.length, published: 0, failed: 0 };
 
@@ -52,6 +54,9 @@ export class PublishOutboxUseCase {
       }
       return result;
     });
+    // Contado depois do commit: o agendamento da nova tentativa está gravado.
+    for (let i = 0; i < outcome.failed; i++) this.metrics.retryScheduled("outbox_publisher");
+    return outcome;
   }
 
   private async publishGroup(

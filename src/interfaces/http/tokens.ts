@@ -12,6 +12,7 @@ export const PROVIDER_IDENTITY = Symbol("PROVIDER_IDENTITY");
 export const PUBLISH_OUTBOX = Symbol("PUBLISH_OUTBOX");
 export const RETRY_PENDING_REFERENCES = Symbol("RETRY_PENDING_REFERENCES");
 export const LOGGER = Symbol("LOGGER");
+export const METRICS = Symbol("METRICS");
 export const RUNTIME_OPTIONS = Symbol("RUNTIME_OPTIONS");
 
 export interface RuntimeOptions {

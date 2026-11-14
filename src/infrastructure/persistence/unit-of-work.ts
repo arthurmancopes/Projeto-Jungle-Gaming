@@ -5,6 +5,7 @@ import {
   ConcurrencyConflictError,
   TransientInfrastructureError,
 } from "../../application/errors";
+import { noopMetrics, type Metrics } from "../../application/ports/metrics";
 import type { TransactionContext, UnitOfWork } from "../../application/ports/unit-of-work";
 import { DomainError } from "../../domain/errors";
 import { createTransactionContext } from "./repositories";
@@ -25,6 +26,7 @@ const TRANSIENT_NETWORK_CODES = new Set([
 export interface UnitOfWorkOptions {
   /** Tempo máximo de espera por um lock de linha antes de desistir (falha transitória). */
   lockTimeoutMs?: number;
+  metrics?: Metrics;
 }
 
 /**
@@ -33,12 +35,14 @@ export interface UnitOfWorkOptions {
  */
 export class MikroOrmUnitOfWork implements UnitOfWork {
   private readonly lockTimeoutMs: number;
+  private readonly metrics: Metrics;
 
   constructor(
     private readonly orm: MikroORM,
     options: UnitOfWorkOptions = {},
   ) {
     this.lockTimeoutMs = Math.trunc(options.lockTimeoutMs ?? 5000);
+    this.metrics = options.metrics ?? noopMetrics;
   }
 
   async run<T>(work: (ctx: TransactionContext) => Promise<T>): Promise<T> {
@@ -52,7 +56,9 @@ export class MikroOrmUnitOfWork implements UnitOfWork {
         { isolationLevel: IsolationLevel.READ_COMMITTED },
       );
     } catch (error) {
-      throw translateError(error);
+      const translated = translateError(error);
+      if (translated instanceof ConcurrencyConflictError) this.metrics.lockConflict();
+      throw translated;
     }
   }
 }

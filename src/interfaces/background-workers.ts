@@ -6,6 +6,7 @@ import {
   type OnApplicationBootstrap,
 } from "@nestjs/common";
 import type { Logger } from "../application/ports/logger";
+import type { Metrics } from "../application/ports/metrics";
 import type { PublishOutboxUseCase } from "../application/publish-outbox.use-case";
 import type { RetryPendingReferencesUseCase } from "../application/retry-pending-references.use-case";
 import type { SubmitWagerTransactionUseCase } from "../application/submit-wager-transaction.use-case";
@@ -15,6 +16,7 @@ import { WagerQueueConsumer } from "../infrastructure/sqs/wager-queue-consumer";
 import { PollingWorker } from "../infrastructure/workers/polling-worker";
 import {
   LOGGER,
+  METRICS,
   PUBLISH_OUTBOX,
   RETRY_PENDING_REFERENCES,
   RUNTIME_OPTIONS,
@@ -42,6 +44,7 @@ export class BackgroundWorkers implements OnApplicationBootstrap, BeforeApplicat
     @Inject(PUBLISH_OUTBOX) private readonly publishOutbox: PublishOutboxUseCase,
     @Inject(RETRY_PENDING_REFERENCES) private readonly retryPending: RetryPendingReferencesUseCase,
     @Inject(LOGGER) private readonly logger: Logger,
+    @Inject(METRICS) private readonly metrics: Metrics,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -56,6 +59,12 @@ export class BackgroundWorkers implements OnApplicationBootstrap, BeforeApplicat
       this.submit,
       { queueUrl, dlqUrl, shutdownTimeoutMs: config.workers.shutdownTimeoutMs },
       this.logger,
+      {
+        onOutcome: (outcome, info) => {
+          if (outcome === "retry") this.metrics.retryScheduled("sqs_consumer");
+          if (outcome === "dead-lettered") this.metrics.deadLettered(info.errorKind ?? "permanent");
+        },
+      },
     );
 
     this.workers.push(

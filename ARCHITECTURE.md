@@ -127,11 +127,11 @@ Fluxo dentro da transação:
 2. Se inseriu: é a primeira vez, segue o processamento.
 3. Se não inseriu: carrega a linha existente.
    - `payload_hash` diferente → conflito (`IDEMPOTENCY_CONFLICT`, HTTP 409);
-   - `payload_hash` igual → replay: devolve o status, o `failureCode` e o `balance_after` gravados, com `idempotentReplay: true`.
+   - `payload_hash` igual → replay: devolve o status, o `failureCode` e o `observed_balance` gravados, com `idempotentReplay: true`.
 
 Se duas requisições idênticas chegam ao mesmo tempo, o segundo `INSERT` fica bloqueado pelo índice único até o commit do primeiro e então cai no caminho de replay. É isso que garante um único débito no teste das 50 requisições paralelas. Se a primeira transação fizer rollback, o segundo `INSERT` passa e processa normalmente.
 
-O replay devolve o saldo **observado no processamento original** (regra 7), por isso `balance_after` é gravado na própria transação, inclusive para `LOSS` e `REJECTED`.
+O replay devolve o saldo **observado no processamento original** (regra 7), por isso `observed_balance` é gravado na própria transação, inclusive para `LOSS` e `REJECTED`.
 
 Também é conflito a mesma dupla `(providerId, externalTransactionId)` com uma `Idempotency-Key` diferente.
 

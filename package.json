@@ -13,12 +13,9 @@
     "test:concurrency": "bun test test/concurrency",
     "infra:up": "docker compose up -d postgres localstack",
     "infra:down": "docker compose down -v",
-    "migration:create": "mikro-orm migration:create",
-    "migration:up": "mikro-orm migration:up",
-    "migration:down": "mikro-orm migration:down"
-  },
-  "mikro-orm": {
-    "configPaths": ["./src/infrastructure/persistence/mikro-orm.config.ts"]
+    "migration:up": "bun src/infrastructure/persistence/migrate.ts up",
+    "migration:down": "bun src/infrastructure/persistence/migrate.ts down",
+    "migration:status": "bun src/infrastructure/persistence/migrate.ts status"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.700.0",
@@ -37,7 +34,6 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@mikro-orm/cli": "^6.4.0",
     "@types/bun": "latest",
     "typescript": "^5.6.0"
   }

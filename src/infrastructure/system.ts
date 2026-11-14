@@ -1,0 +1,14 @@
+import type { Clock, IdGenerator } from "../application/ports/system";
+
+export class SystemClock implements Clock {
+  now(): Date {
+    return new Date();
+  }
+}
+
+/** UUID v7: ordenável por tempo, o que mantém os índices de chave primária compactos. */
+export class UuidV7Generator implements IdGenerator {
+  next(): string {
+    return Bun.randomUUIDv7();
+  }
+}

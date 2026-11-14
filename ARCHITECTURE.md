@@ -42,11 +42,11 @@ Todas as instâncias da aplicação são idênticas: cada uma serve HTTP, consom
 Escolhido por ser o preferencial do desafio e pelos recursos usados diretamente na solução:
 
 - `em.transactional()` delimita a transação única do use case;
-- `LockMode.PESSIMISTIC_WRITE` gera o `SELECT ... FOR UPDATE` da wallet;
+- transação, lock de linha e SQL nativo passam pelo mesmo `EntityManager`, sem conexão paralela;
 - Unit of Work explícita: cada execução do use case usa um `EntityManager` em fork, sem estado compartilhado entre requisições;
 - migrations versionadas com `up()` e `down()`.
 
-Onde o ORM não expressa bem a intenção (`INSERT ... ON CONFLICT DO NOTHING`, `FOR UPDATE SKIP LOCKED`), uso SQL nativo pelo próprio `EntityManager`, dentro da mesma transação.
+As leituras usam o `QueryBuilder` e devolvem linhas puras, sem passar pelo Identity Map. Isso é intencional: uma leitura com lock nunca pode reaproveitar um estado carregado antes do lock. As escritas são SQL explícito pelo próprio `EntityManager` (`INSERT ... ON CONFLICT DO NOTHING`, `UPDATE` condicionado à `version`, `FOR UPDATE SKIP LOCKED`), dentro da mesma transação, porque essas instruções são a própria garantia de idempotência e concorrência e devem ficar visíveis no código.
 
 Nível de isolamento: `READ COMMITTED` (padrão do PostgreSQL). É suficiente porque toda leitura que precede uma escrita financeira acontece depois do lock da linha da wallet.
 
@@ -57,9 +57,9 @@ Nível de isolamento: `READ COMMITTED` (padrão do PostgreSQL). É suficiente po
 | Contratos (HTTP, SQS, eventos) | string decimal com 2 casas: `"25.00"`                     |
 | Domínio                        | `Money` imutável sobre `decimal.js`                       |
 | Banco                          | `numeric(20,2)` + coluna `currency char(3)`               |
-| Mapeamento ORM                 | tipo customizado que lê e grava `numeric` como **string** |
+| Mapeamento ORM                 | propriedade `string` sobre coluna `numeric(20,2)`, com guarda de tipo no mapper |
 
-Em nenhum ponto o valor passa por `number`. O driver `pg` já devolve `numeric` como string, e o tipo customizado impede a conversão.
+Em nenhum ponto o valor passa por `number`. O driver `pg` devolve `numeric` como string, e o mapper de persistência lança erro se receber qualquer outro tipo, em vez de converter.
 
 Validação de entrada por expressão regular (`^(0|[1-9]\d*)(\.\d{1,2})?$`) antes de construir o `Decimal`. Isso rejeita por construção `NaN`, `Infinity`, notação científica, string vazia, sinal, mais de 2 casas e `amount` enviado como número JSON.
 
@@ -93,7 +93,7 @@ O ledger é de entrada simples (um lançamento por movimentação). Partidas dob
 **Estratégia: lock pessimista na linha da wallet**, com `version` e `CHECK` como defesas adicionais.
 
 ```sql
-SELECT * FROM wallets WHERE id = $1 FOR UPDATE;
+SELECT * FROM wallets WHERE id = $1 FOR NO KEY UPDATE;
 -- ... regras de domínio ...
 UPDATE wallets SET balance = $2, version = version + 1, updated_at = now()
  WHERE id = $1 AND version = $3;
@@ -101,9 +101,11 @@ UPDATE wallets SET balance = $2, version = version + 1, updated_at = now()
 
 Por que pessimista e não otimista:
 
-- a wallet de um jogador ativo é um recurso quente. Com lock otimista, N apostas simultâneas geram N-1 conflitos e retries; com `FOR UPDATE`, elas formam fila no banco e cada uma executa uma vez;
+- a wallet de um jogador ativo é um recurso quente. Com lock otimista, N apostas simultâneas geram N-1 conflitos e retries; com o lock de linha, elas formam fila no banco e cada uma executa uma vez;
 - o resultado é determinístico, o que torna o cenário obrigatório (100.00, duas apostas de 80.00) simples de provar: a segunda transação só lê o saldo depois do commit da primeira, vê 20.00 e é rejeitada;
 - a unidade de bloqueio é a linha da wallet. Wallets diferentes nunca se bloqueiam, portanto não há lock global.
+
+**Por que `FOR NO KEY UPDATE` e não `FOR UPDATE`.** A primeira versão usava `FOR UPDATE`, e o teste de 30 apostas concorrentes na mesma wallet falhou com `deadlock detected` (SQLSTATE `40P01`). A causa: o `INSERT` em `wager_transactions` valida a FK para `wallets` tomando `FOR KEY SHARE` na linha da wallet. Duas transações que já inseriram suas linhas seguram esse lock compartilhado, e `FOR UPDATE` conflita com ele, então cada uma espera a outra. `FOR NO KEY UPDATE` é o lock que um `UPDATE` de colunas não-chave já toma: é compatível com `FOR KEY SHARE` e continua exclusivo entre processadores da mesma wallet. Como o MikroORM não tem um `LockMode` para ele, essa leitura é SQL nativo.
 
 O `UPDATE ... WHERE version = ?` e o `CHECK (balance >= 0)` não deveriam disparar nunca. Existem para que um bug futuro no caminho de lock vire erro explícito em vez de saldo corrompido.
 
